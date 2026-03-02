@@ -5,112 +5,145 @@ using TargetProject;
 
 namespace TestProject
 {
-    [TestClass("Tests for Calculator class")]
-    public class CalculatorTests
+    [TestClass("Bank account tests")]
+    public class BankAccountTests
     {
-        private Calculator _calculator;
+        private BankAccount _account;
 
         [Setup]
         public void Init()
         {
-            _calculator = new Calculator();
+            _account = new BankAccount("ACC001", 1000m);
         }
 
         [Teardown]
         public void CleanUp()
         {
-            _calculator = null;
+            _account = null;
         }
 
-        [TestMethod("Adding two positive numbers", timeout: 100)]
-        public void Add_PositiveNumbers_ReturnsSum()
+        [TestMethod("Deposit increases balance", timeout: 100)]
+        public void Deposit_ValidAmount_IncreasesBalance()
         {
-            int result = _calculator.Add(2, 3);
-            Assert.AreEqual(5, result);
+            decimal initialBalance = _account.Balance;
+            _account.Deposit(500m);
+            Assert.AreEqual(initialBalance + 500m, _account.Balance);
         }
 
-        [TestMethod("Division by zero throws exception")]
-        public void Divide_ByZero_ThrowsException()
+        [TestMethod("Withdraw decreases balance")]
+        public void Withdraw_ValidAmount_DecreasesBalance()
         {
-            Assert.Throws<DivideByZeroException>(() => _calculator.Divide(10, 0));
-        }
-    }
-
-    [TestClass]
-    public class StringManipulatorTests
-    {
-        private StringManipulator _manipulator = new StringManipulator();
-
-        [TestMethod]
-        public void Reverse_ValidString_ReversesString()
-        {
-            string result = _manipulator.Reverse("hello");
-            Assert.AreNotEqual("hello", result);
-            Assert.AreEqual("olleh", result);
+            decimal initialBalance = _account.Balance;
+            _account.Withdraw(300m);
+            Assert.AreEqual(initialBalance - 300m, _account.Balance);
         }
 
-        [TestMethod]
-        public void Concatenate_Strings_ContainsSubstring()
+        [TestMethod("Withdraw with insufficient funds throws exception")]
+        public void Withdraw_InsufficientFunds_ThrowsException()
         {
-            string result = _manipulator.Concatenate("foo", "bar");
-            Assert.Contains("ooba", result);
-            Assert.IsTrue(result.Length == 6);
-            Assert.IsFalse(result.Length == 5);
+            Assert.Throws<InvalidOperationException>(() => _account.Withdraw(2000m));
         }
 
-        [TestMethod]
-        public void Reverse_Null_ReturnsNull()
+        [TestMethod("Deposit negative amount throws exception")]
+        public void Deposit_NegativeAmount_ThrowsException()
         {
-            string result = _manipulator.Reverse(null);
-            Assert.IsNull(result);
-        }
-        
-        [TestMethod]
-        public void Reverse_Empty_ReturnsNotNull()
-        {
-            string result = _manipulator.Reverse("");
-            Assert.IsNotNull(result);
-        }
-    }
-
-    [TestClass("Async tests")]
-    public class AsyncServiceTests
-    {
-        private AsyncService _service = new AsyncService();
-
-        [TestMethod("Test fetching data asynchronously")]
-        public async Task FetchDataAsync_ReturnsValue()
-        {
-            int result = await _service.FetchDataAsync();
-            Assert.AreEqual(42, result);
+            Assert.Throws<ArgumentException>(() => _account.Deposit(-100m));
         }
 
-        [TestMethod]
-        public async Task FailAsync_ThrowsInvalidOperationException()
+        [TestMethod("Locked account prevents operations")]
+        public void LockedAccount_PreventsDeposit()
         {
-            await Assert.ThrowsAsync<InvalidOperationException>(async () => await _service.FailAsync());
+            _account.Lock();
+            Assert.IsTrue(_account.IsLocked);
+            Assert.Throws<InvalidOperationException>(() => _account.Deposit(100m));
         }
-    }
 
-    [TestClass("Reference tests")]
-    public class ReferenceTests
-    {
-        [TestMethod]
-        public void Objects_AreSame_AreNotSame()
+        [TestMethod("Transaction history tracking")]
+        public void Deposit_CreatesTransaction()
         {
-            object obj1 = new object();
-            object obj2 = obj1;
-            object obj3 = new object();
-
-            Assert.AreSame(obj1, obj2);
-            Assert.AreNotSame(obj1, obj3);
+            bool hadHistory = _account.HasTransactionHistory();
+            _account.Deposit(100m);
+            Assert.IsTrue(_account.HasTransactionHistory());
+            Assert.IsNotNull(_account.GetLastTransaction());
         }
-        
-        [TestMethod]
-        public void FailingTest_ForDemonstration()
+
+        [TestMethod("Account initialization with empty number throws exception")]
+        public void Constructor_EmptyAccountNumber_ThrowsException()
         {
-            // This test is supposed to fail to demonstrate error handling
-            Assert.AreEqual(1, 2);
+            Assert.Throws<ArgumentException>(() => new BankAccount(""));
+        }
+
+        [TestMethod("Account number contains expected prefix")]
+        public void AccountNumber_ContainsPrefix()
+        {
+            Assert.Contains("ACC", _account.AccountNumber);
+        }
+
+        [TestMethod("Async deposit increases balance")]
+        public async Task DepositAsync_ValidAmount_IncreasesBalance()
+        {
+            decimal initialBalance = _account.Balance;
+            bool result = await _account.DepositAsync(250m);
+            Assert.IsTrue(result);
+            Assert.AreEqual(initialBalance + 250m, _account.Balance);
+        }
+
+        [TestMethod("Async withdraw decreases balance")]
+        public async Task WithdrawAsync_ValidAmount_DecreasesBalance()
+        {
+            decimal initialBalance = _account.Balance;
+            bool result = await _account.WithdrawAsync(150m);
+            Assert.IsTrue(result);
+            Assert.AreEqual(initialBalance - 150m, _account.Balance);
+        }
+
+        [TestMethod("Async withdraw with insufficient funds throws exception")]
+        public async Task WithdrawAsync_InsufficientFunds_ThrowsException()
+        {
+            await Assert.ThrowsAsync<InvalidOperationException>(async () => 
+                await _account.WithdrawAsync(5000m));
+        }
+
+        [TestMethod("Get balance asynchronously")]
+        public async Task GetBalanceAsync_ReturnsCurrentBalance()
+        {
+            decimal balance = await _account.GetBalanceAsync();
+            Assert.AreEqual(_account.Balance, balance);
+            Assert.AreNotEqual(0m, balance);
+        }
+
+        [TestMethod("Get last transaction asynchronously")]
+        public async Task GetLastTransactionAsync_ReturnsTransaction()
+        {
+            _account.Deposit(100m);
+            Transaction? transaction = await _account.GetLastTransactionAsync();
+            Assert.IsNotNull(transaction);
+            Assert.IsTrue(transaction.Amount > 0);
+        }
+
+        [TestMethod("Async operation failure throws exception")]
+        public async Task FailOperationAsync_ThrowsException()
+        {
+            await Assert.ThrowsAsync<InvalidOperationException>(async () => 
+                await _account.FailOperationAsync());
+        }
+
+        [TestMethod("Different account instances are not same")]
+        public void BankAccount_DifferentInstances_AreNotSame()
+        {
+            var account1 = new BankAccount("ACC001");
+            var account2 = new BankAccount("ACC002");
+            
+            Assert.AreNotSame(account1, account2);
+            Assert.AreNotEqual(account1.AccountNumber, account2.AccountNumber);
+        }
+
+        [TestMethod("Failing test for demonstration")]
+        public void FailingTest_Demonstration()
+        {
+            _account.Deposit(100m);
+            // Этот тест намеренно провалится - ожидаем баланс 2000, но будет 1100
+            Assert.AreEqual(2000m, _account.Balance);
         }
     }
 }
