@@ -18,17 +18,30 @@ namespace TestLibrary
     {
         public string Description { get; set; }
         public int Timeout { get; set; }
+        public int Data { get; set; }
 
-        public TestMethodAttribute(string description = "", int timeout = 0)
+        public TestMethodAttribute(string description = "", int timeout = 0, int data = 0)
         {
             Description = description;
             Timeout = timeout;
+            Data = data;
         }
     }
 
     [AttributeUsage(AttributeTargets.Method)]
     public class SetupAttribute : Attribute
     {
+    }
+
+    [AttributeUsage(AttributeTargets.Method)]
+    public class TimeoutAttribute : Attribute
+    {
+        public int Milliseconds { get; }
+
+        public TimeoutAttribute(int milliseconds)
+        {
+            Milliseconds = milliseconds;
+        }
     }
 
     [AttributeUsage(AttributeTargets.Method)]
