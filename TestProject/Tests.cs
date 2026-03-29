@@ -145,5 +145,12 @@ namespace TestProject
             // Этот тест намеренно провалится - ожидаем баланс 2000, но будет 1100
             Assert.AreEqual(2000m, _account.Balance);
         }
+
+        [TestMethod("Timeout attribute demonstration")]
+        [Timeout(50)]
+        public async Task TimeoutAttribute_Demonstration()
+        {
+            await Task.Delay(200);
+        }
     }
 }

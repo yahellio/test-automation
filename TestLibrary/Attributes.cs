@@ -34,6 +34,17 @@ namespace TestLibrary
     }
 
     [AttributeUsage(AttributeTargets.Method)]
+    public class TimeoutAttribute : Attribute
+    {
+        public int Milliseconds { get; }
+
+        public TimeoutAttribute(int milliseconds)
+        {
+            Milliseconds = milliseconds;
+        }
+    }
+
+    [AttributeUsage(AttributeTargets.Method)]
     public class TeardownAttribute : Attribute
     {
     }
