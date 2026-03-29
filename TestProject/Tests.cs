@@ -22,12 +22,12 @@ namespace TestProject
             _account = null;
         }
 
-        [TestMethod("Deposit increases balance", timeout: 100)]
-        public void Deposit_ValidAmount_IncreasesBalance()
+        [TestMethod("Deposit increases balance", timeout: 100, data: 500)]
+        public void Deposit_ValidAmount_IncreasesBalance(int amount)
         {
             decimal initialBalance = _account.Balance;
-            _account.Deposit(500m);
-            Assert.AreEqual(initialBalance + 500m, _account.Balance);
+            _account.Deposit(amount);
+            Assert.AreEqual(initialBalance + amount, _account.Balance);
         }
 
         [TestMethod("Withdraw decreases balance")]

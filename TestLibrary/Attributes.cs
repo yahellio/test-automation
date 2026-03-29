@@ -18,11 +18,13 @@ namespace TestLibrary
     {
         public string Description { get; set; }
         public int Timeout { get; set; }
+        public int Data { get; set; }
 
-        public TestMethodAttribute(string description = "", int timeout = 0)
+        public TestMethodAttribute(string description = "", int timeout = 0, int data = 0)
         {
             Description = description;
             Timeout = timeout;
+            Data = data;
         }
     }
 

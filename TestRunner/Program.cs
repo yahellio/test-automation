@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Linq;
 using System.Reflection;
 using System.Threading.Tasks;
@@ -60,6 +60,7 @@ namespace TestRunner
                     totalTests++;
                     var methodAttr = testMethod.GetCustomAttribute<TestMethodAttribute>();
                     string testName = string.IsNullOrEmpty(methodAttr?.Description) ? testMethod.Name : methodAttr.Description;
+                    var parameters = BuildParameters(testMethod, methodAttr);
                     
                     Console.Write($"  Выполнение: {testName} ... ");
 
@@ -71,11 +72,11 @@ namespace TestRunner
                         // Запуск теста
                         if (testMethod.ReturnType == typeof(Task))
                         {
-                            await (Task)(testMethod.Invoke(instance, null) ?? Task.CompletedTask);
+                            await (Task)(testMethod.Invoke(instance, parameters) ?? Task.CompletedTask);
                         }
                         else
                         {
-                            testMethod.Invoke(instance, null);
+                            testMethod.Invoke(instance, parameters);
                         }
 
                         Console.ForegroundColor = ConsoleColor.Green;
@@ -128,6 +129,25 @@ namespace TestRunner
             Console.WriteLine($"Успешно: {passedTests}");
             Console.WriteLine($"Провалено: {failedTests}");
             Console.WriteLine("========================================");
+        }
+
+        private static object[]? BuildParameters(MethodInfo testMethod, TestMethodAttribute? methodAttr)
+        {
+            var methodParameters = testMethod.GetParameters();
+
+            if (methodParameters.Length == 0)
+            {
+                return null;
+            }
+
+            if (methodParameters.Length == 1 && methodParameters[0].ParameterType == typeof(int))
+            {
+                return new object[] { methodAttr?.Data ?? 0 };
+            }
+
+            throw new InvalidOperationException(
+                $"Тестовый метод {testMethod.Name} имеет неподдерживаемую сигнатуру. " +
+                "Разрешены методы без параметров или с одним параметром типа int.");
         }
     }
 }
