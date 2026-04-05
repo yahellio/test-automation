@@ -11,6 +11,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TestProject", "TestProject\
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TestRunner", "TestRunner\TestRunner.csproj", "{523EF12D-0A49-4E1F-B7D9-95C59C3C4EF4}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ThreadPoolModule", "ThreadPoolModule\ThreadPoolModule.csproj", "{2A6EE191-9821-45E7-9C9C-73D29F9DAB76}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -69,6 +71,18 @@ Global
 		{523EF12D-0A49-4E1F-B7D9-95C59C3C4EF4}.Release|x64.Build.0 = Release|Any CPU
 		{523EF12D-0A49-4E1F-B7D9-95C59C3C4EF4}.Release|x86.ActiveCfg = Release|Any CPU
 		{523EF12D-0A49-4E1F-B7D9-95C59C3C4EF4}.Release|x86.Build.0 = Release|Any CPU
+		{2A6EE191-9821-45E7-9C9C-73D29F9DAB76}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{2A6EE191-9821-45E7-9C9C-73D29F9DAB76}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{2A6EE191-9821-45E7-9C9C-73D29F9DAB76}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{2A6EE191-9821-45E7-9C9C-73D29F9DAB76}.Debug|x64.Build.0 = Debug|Any CPU
+		{2A6EE191-9821-45E7-9C9C-73D29F9DAB76}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{2A6EE191-9821-45E7-9C9C-73D29F9DAB76}.Debug|x86.Build.0 = Debug|Any CPU
+		{2A6EE191-9821-45E7-9C9C-73D29F9DAB76}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{2A6EE191-9821-45E7-9C9C-73D29F9DAB76}.Release|Any CPU.Build.0 = Release|Any CPU
+		{2A6EE191-9821-45E7-9C9C-73D29F9DAB76}.Release|x64.ActiveCfg = Release|Any CPU
+		{2A6EE191-9821-45E7-9C9C-73D29F9DAB76}.Release|x64.Build.0 = Release|Any CPU
+		{2A6EE191-9821-45E7-9C9C-73D29F9DAB76}.Release|x86.ActiveCfg = Release|Any CPU
+		{2A6EE191-9821-45E7-9C9C-73D29F9DAB76}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

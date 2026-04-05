@@ -3,6 +3,7 @@
   <ItemGroup>
     <ProjectReference Include="..\TestLibrary\TestLibrary.csproj" />
     <ProjectReference Include="..\TestProject\TestProject.csproj" />
+    <ProjectReference Include="..\ThreadPoolModule\ThreadPoolModule.csproj" />
   </ItemGroup>
 
   <PropertyGroup>

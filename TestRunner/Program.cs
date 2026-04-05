@@ -1,349 +1,302 @@
-using System;
-using System.Collections.Generic;
 using System.Diagnostics;
-using System.Linq;
-using System.Reflection;
 using System.Threading;
-using System.Threading.Tasks;
-using TestLibrary;
+using ThreadPoolModule;
 
-namespace TestRunner
+namespace TestRunner;
+
+internal static class Program
 {
-    internal static class Program
+    private const int MinTotalTestRuns = 50;
+
+    private static readonly object ConsoleLock = new();
+
+    private static void Main()
     {
-        private const int DefaultMaxDegreeOfParallelism = 4;
+        Console.WriteLine("Запуск средства тестирования \n");
 
-        private sealed record TestCase(
-            Type TestClass,
-            MethodInfo TestMethod,
-            MethodInfo? SetupMethod,
-            MethodInfo? TeardownMethod,
-            TestMethodAttribute? MethodAttribute,
-            string DisplayName);
-
-        private sealed record TestRunResult(int Total, int Passed, int Failed, TimeSpan Elapsed);
-
-        private sealed record TestExecutionResult(bool IsSuccess, string ErrorMessage);
-
-        private static async Task Main(string[] args)
+        var testAssembly = TestRunnerCore.LoadTestAssembly();
+        if (testAssembly == null)
         {
-            Console.WriteLine("Запуск средства тестирования...\n");
-
-            var testAssembly = LoadTestAssembly();
-            if (testAssembly == null)
-            {
-                Console.WriteLine("Сборка TestProject не найдена.");
-                return;
-            }
-
-            var testCases = DiscoverTestCases(testAssembly);
-            if (testCases.Count == 0)
-            {
-                Console.WriteLine("Тесты не найдены.");
-                return;
-            }
-
-            var maxDegreeOfParallelism = ParseMaxDegreeOfParallelism(args);
-
-            Console.WriteLine($"Найдено тестов: {testCases.Count}");
-            Console.WriteLine($"Лимит параллельных потоков: {maxDegreeOfParallelism}");
-
-            var sequential = await RunAllTestsAsync(testCases, 1, "Последовательный запуск");
-            var parallel = await RunAllTestsAsync(
-                testCases,
-                maxDegreeOfParallelism,
-                "Параллельный запуск");
-
-            PrintComparison(sequential, parallel);
+            Console.WriteLine("Сборка TestProject не найдена.");
+            return;
         }
 
-        private static int ParseMaxDegreeOfParallelism(string[] args)
+        var testCases = TestRunnerCore.DiscoverTestCases(testAssembly);
+        if (testCases.Count == 0)
         {
-            if (args.Length == 0)
-            {
-                return DefaultMaxDegreeOfParallelism;
-            }
-
-            if (int.TryParse(args[0], out var parsedValue) && parsedValue > 0)
-            {
-                return parsedValue;
-            }
-
-            Console.WriteLine(
-                $"Некорректный MaxDegreeOfParallelism \"{args[0]}\". " +
-                $"Используется значение по умолчанию: {DefaultMaxDegreeOfParallelism}.");
-            return DefaultMaxDegreeOfParallelism;
+            Console.WriteLine("Тесты не найдены.");
+            return;
         }
 
-        private static Assembly? LoadTestAssembly()
+        var catalog = testCases.ToList();
+        var passes = (int)Math.Ceiling(MinTotalTestRuns / (double)catalog.Count);
+        var plannedRuns = passes * catalog.Count;
+
+        Console.WriteLine($"Тестов в каталоге: {catalog.Count}");
+        Console.WriteLine($"Полных прогонов: {passes} (выполнений тестов: {plannedRuns}, требование ≥{MinTotalTestRuns})\n");
+
+        var baseLogError = new Action<Exception>(ex =>
         {
-            var alreadyLoaded = AppDomain.CurrentDomain.GetAssemblies()
-                .FirstOrDefault(a => a.GetName().Name == "TestProject");
-
-            if (alreadyLoaded != null)
+            lock (ConsoleLock)
             {
-                return alreadyLoaded;
+                Console.WriteLine($"[Ошибка пула] {ex.GetType().Name}: {ex.Message}");
             }
+        });
 
-            try
+        var single = RunPhase(
+            new DynamicThreadPoolOptions
             {
-                return Assembly.Load("TestProject");
-            }
-            catch
+                MinThreads = 1,
+                MaxThreads = 1,
+                QueueLengthScaleThreshold = 100,
+                OldestTaskWaitThresholdMs = 60_000,
+                IdleTimeoutMs = 60_000,
+                StuckThreadTimeoutMs = 120_000,
+                WatchdogPeriodMs = 1000,
+                LogError = baseLogError
+            },
+            catalog,
+            passes,
+            "Фаза 1: один поток (как последовательное выполнение)",
+            monitor: false);
+
+        var dynamic = RunPhase(
+            new DynamicThreadPoolOptions
             {
-                return null;
-            }
-        }
-
-        private static List<TestCase> DiscoverTestCases(Assembly testAssembly)
-        {
-            var result = new List<TestCase>();
-
-            var testClasses = testAssembly.GetTypes()
-                .Where(t => t.GetCustomAttribute<TestClassAttribute>() != null);
-
-            foreach (var testClass in testClasses)
-            {
-                var methods = testClass.GetMethods();
-                var testMethods = methods
-                    .Where(m => m.GetCustomAttribute<TestMethodAttribute>() != null)
-                    .ToList();
-                var setupMethod = methods.FirstOrDefault(m => m.GetCustomAttribute<SetupAttribute>() != null);
-                var teardownMethod = methods.FirstOrDefault(m => m.GetCustomAttribute<TeardownAttribute>() != null);
-
-                foreach (var testMethod in testMethods)
+                MinThreads = 2,
+                MaxThreads = 8,
+                QueueLengthScaleThreshold = 2,
+                OldestTaskWaitThresholdMs = 150,
+                IdleTimeoutMs = 1200,
+                StuckThreadTimeoutMs = 12000,
+                WatchdogPeriodMs = 350,
+                LogInfo = msg =>
                 {
-                    var methodAttribute = testMethod.GetCustomAttribute<TestMethodAttribute>();
-                    var methodName = string.IsNullOrEmpty(methodAttribute?.Description)
-                        ? testMethod.Name
-                        : methodAttribute.Description;
+                    lock (ConsoleLock)
+                    {
+                        Console.WriteLine($"[пул] {msg}");
+                    }
+                },
+                LogError = baseLogError
+            },
+            catalog,
+            passes,
+            "Фаза 2: динамический пул",
+            monitor: true);
 
-                    result.Add(new TestCase(
-                        testClass,
-                        testMethod,
-                        setupMethod,
-                        teardownMethod,
-                        methodAttribute,
-                        $"{testClass.Name}: {methodName}"));
-                }
-            }
-
-            return result;
+        Console.WriteLine("\n========================================");
+        Console.WriteLine("Сравнение времени (стена)");
+        Console.WriteLine($"Один поток:        {single.ElapsedMs:F0} мс");
+        Console.WriteLine($"Динамический пул:  {dynamic.ElapsedMs:F0} мс");
+        var diff = single.ElapsedMs - dynamic.ElapsedMs;
+        if (diff > 0)
+        {
+            Console.ForegroundColor = ConsoleColor.Green;
+            Console.WriteLine($"Динамический пул быстрее на {diff:F0} мс");
+        }
+        else if (diff < 0)
+        {
+            Console.ForegroundColor = ConsoleColor.Yellow;
+            Console.WriteLine($"Один поток быстрее на {Math.Abs(diff):F0} мс");
+        }
+        else
+        {
+            Console.WriteLine("Время одинаковое");
         }
 
-        private static async Task<TestRunResult> RunAllTestsAsync(
-            IReadOnlyCollection<TestCase> testCases,
-            int maxDegreeOfParallelism,
-            string runTitle)
+        Console.ResetColor();
+        Console.WriteLine($"Макс. потоков (фаза 2): {dynamic.MaxThreadsObserved} (лимит {dynamic.PoolMaxThreads})");
+        Console.WriteLine("========================================");
+    }
+
+    private sealed record PhaseResult(double ElapsedMs, int MaxThreadsObserved, int PoolMaxThreads);
+
+    private static PhaseResult RunPhase(
+        DynamicThreadPoolOptions poolOptions,
+        List<TestCase> catalog,
+        int passes,
+        string title,
+        bool monitor)
+    {
+        lock (ConsoleLock)
         {
-            var consoleLock = new object();
-            int passedTests = 0;
-            int failedTests = 0;
+            Console.WriteLine($"\n=== {title} ===\n");
+        }
 
-            var stopwatch = Stopwatch.StartNew();
+        using var pool = new DynamicThreadPool(poolOptions);
 
-            Console.WriteLine($"\n=== {runTitle} ===");
+        long passed = 0;
+        long failed = 0;
+        long completed = 0;
 
-            var options = new ParallelOptions
+        using var monitorCts = new CancellationTokenSource();
+        MonitorStats? stats = null;
+        Thread? monitorThread = null;
+        if (monitor)
+        {
+            stats = new MonitorStats();
+            monitorThread = new Thread(() => MonitorLoop(pool, monitorCts.Token, stats))
             {
-                MaxDegreeOfParallelism = maxDegreeOfParallelism
+                IsBackground = true,
+                Name = "Pool-Monitor"
             };
+            monitorThread.Start();
+        }
 
-            await Parallel.ForEachAsync(testCases, options, async (testCase, _) =>
+        var wall = Stopwatch.StartNew();
+
+        EnqueueScenario(catalog, passes, (tc, pass) =>
+        {
+            //подача задач в пул
+            pool.Enqueue(() =>
             {
-                var executionResult = await ExecuteTestAsync(testCase);
-
-                lock (consoleLock)
+                var r = TestRunnerCore.ExecuteTestAsync(tc).GetAwaiter().GetResult();
+                Interlocked.Increment(ref completed);
+                if (r.IsSuccess)
                 {
-                    Console.Write($"  {testCase.DisplayName} ... ");
-                    if (executionResult.IsSuccess)
+                    Interlocked.Increment(ref passed);
+                }
+                else
+                {
+                    Interlocked.Increment(ref failed);
+                }
+
+                lock (ConsoleLock)
+                {
+                    Console.Write($"  {tc.DisplayName} [прогон {pass}] ... ");
+                    if (r.IsSuccess)
                     {
                         Console.ForegroundColor = ConsoleColor.Green;
                         Console.WriteLine("УСПЕШНО");
-                        Console.ResetColor();
                     }
                     else
                     {
                         Console.ForegroundColor = ConsoleColor.Red;
                         Console.WriteLine("ПРОВАЛЕНО");
-                        Console.ResetColor();
-                        Console.WriteLine($"    {executionResult.ErrorMessage}");
+                        Console.WriteLine($"    {r.ErrorMessage}");
                     }
-                }
 
-                if (executionResult.IsSuccess)
-                {
-                    Interlocked.Increment(ref passedTests);
-                }
-                else
-                {
-                    Interlocked.Increment(ref failedTests);
+                    Console.ResetColor();
                 }
             });
+        });
 
-            stopwatch.Stop();
+        //блокирует текущий поток, пока все задачи не будут выполнены
+        pool.WaitForDrain();
+        wall.Stop();
+        monitorCts.Cancel();
+        monitorThread?.Join(TimeSpan.FromSeconds(2));
 
-            var result = new TestRunResult(
-                testCases.Count,
-                passedTests,
-                failedTests,
-                stopwatch.Elapsed);
+        var snap = pool.GetSnapshot();
+        var maxObserved = stats?.MaxActiveThreads ?? poolOptions.MaxThreads;
 
+        lock (ConsoleLock)
+        {
             Console.WriteLine("----------------------------------------");
-            Console.WriteLine($"Всего тестов: {result.Total}");
-            Console.WriteLine($"Успешно: {result.Passed}");
-            Console.WriteLine($"Провалено: {result.Failed}");
-            Console.WriteLine($"Время: {result.Elapsed.TotalMilliseconds:F0} мс");
-            Console.WriteLine("----------------------------------------");
-
-            return result;
+            Console.WriteLine(
+                $"Завершено: {completed}, успешно: {passed}, провалено: {failed}, время: {wall.Elapsed.TotalMilliseconds:F0} мс");
+            if (monitor)
+            {
+                Console.WriteLine(
+                    $"Замены при зависании: {snap.StuckReplacements}, сбоев воркеров: {snap.WorkerFaultRecoveries}");
+            }
         }
 
-        private static async Task<TestExecutionResult> ExecuteTestAsync(TestCase testCase)
+        return new PhaseResult(wall.Elapsed.TotalMilliseconds, maxObserved, poolOptions.MaxThreads);
+    }
+
+    private sealed class MonitorStats
+    {
+        public int MaxActiveThreads;
+        public readonly object Gate = new();
+    }
+
+    private static void EnqueueScenario(
+        IReadOnlyList<TestCase> catalog,
+        int passes,
+        Action<TestCase, int> enqueueOne)
+    {
+        lock (ConsoleLock)
         {
-            object? instance;
-            try
+            Console.WriteLine("Сценарий: пауза → пик → пауза → единичные → пауза → полные прогоны\n");
+        }
+
+        Thread.Sleep(400);
+
+        lock (ConsoleLock)
+        {
+            Console.WriteLine("--- Пик (пачка) ---");
+        }
+        for (var i = 0; i < Math.Min(8, catalog.Count); i++)
+        {
+            enqueueOne(catalog[i], 1);
+        }
+
+        Thread.Sleep(350);
+
+        lock (ConsoleLock)
+        {
+            Console.WriteLine("--- Единичные подачи ---");
+        }
+        for (var j = 0; j < 5 && j < catalog.Count; j++)
+        {
+            enqueueOne(catalog[j], 1);
+            Thread.Sleep(120);
+        }
+
+        Thread.Sleep(500);
+
+        lock (ConsoleLock)
+        {
+            Console.WriteLine("--- Пауза (имитация простоя; во 2-й фазе пул может сократить число потоков) ---");
+        }
+
+        Thread.Sleep(900);
+
+        lock (ConsoleLock)
+        {
+            Console.WriteLine($"--- {passes} полных прогонов ---");
+        }
+        for (var p = 1; p <= passes; p++)
+        {
+            foreach (var tc in catalog)
             {
-                instance = Activator.CreateInstance(testCase.TestClass);
-            }
-            catch (Exception ex)
-            {
-                return new TestExecutionResult(false, $"Не удалось создать класс теста: {ex.Message}");
+                enqueueOne(tc, p);
             }
 
-            object[]? parameters;
-            try
+            if (p < passes)
             {
-                parameters = BuildParameters(testCase.TestMethod, testCase.MethodAttribute);
+                Thread.Sleep(80);
             }
-            catch (Exception ex)
+        }
+    }
+
+    private static void MonitorLoop(DynamicThreadPool pool, CancellationToken ct, MonitorStats stats)
+    {
+        while (!ct.IsCancellationRequested)
+        {
+            if (ct.WaitHandle.WaitOne(280))
             {
-                return new TestExecutionResult(false, ex.Message);
+                break;
             }
 
-            var timeoutMs = ResolveTimeout(testCase.TestMethod, testCase.MethodAttribute);
-
-            try
+            var s = pool.GetSnapshot();
+            lock (stats.Gate)
             {
-                var executionTask = ExecuteTestBodyAsync(testCase, instance, parameters);
-
-                if (timeoutMs > 0)
+                if (s.ActiveThreads > stats.MaxActiveThreads)
                 {
-                    var completedTask = await Task.WhenAny(executionTask, Task.Delay(timeoutMs));
-                    if (completedTask != executionTask)
-                    {
-                        return new TestExecutionResult(false, $"Превышено время ожидания ({timeoutMs} мс)");
-                    }
-                }
-
-                await executionTask;
-                return new TestExecutionResult(true, string.Empty);
-            }
-            catch (Exception ex)
-            {
-                var actualEx = UnwrapException(ex);
-                if (actualEx is AssertFailedException)
-                {
-                    return new TestExecutionResult(false, $"Ошибка проверки: {actualEx.Message}");
-                }
-
-                return new TestExecutionResult(false, $"{actualEx.GetType().Name}: {actualEx.Message}");
-            }
-        }
-
-        private static async Task ExecuteTestBodyAsync(TestCase testCase, object? instance, object[]? parameters)
-        {
-            try
-            {
-                testCase.SetupMethod?.Invoke(instance, null);
-
-                var invokeResult = testCase.TestMethod.Invoke(instance, parameters);
-                if (invokeResult is Task task)
-                {
-                    await task;
+                    stats.MaxActiveThreads = s.ActiveThreads;
                 }
             }
-            finally
+
+            lock (ConsoleLock)
             {
-                testCase.TeardownMethod?.Invoke(instance, null);
+                Console.WriteLine(
+                    $"[Состояние пула] активных потоков: {s.ActiveThreads}, " +
+                    $"Задач в очереди: {s.QueueLength}, " +
+                    $"Самая ранняя задача в очереди ждёт: {s.OldestWaitMs} мс, " +
+                    $"Задач уже выполнено: {s.CompletedTasks}");
             }
-        }
-
-        private static int ResolveTimeout(MethodInfo testMethod, TestMethodAttribute? methodAttr)
-        {
-            var timeoutAttribute = testMethod.GetCustomAttribute<TimeoutAttribute>();
-            if (timeoutAttribute != null && timeoutAttribute.Milliseconds > 0)
-            {
-                return timeoutAttribute.Milliseconds;
-            }
-
-            if (methodAttr != null && methodAttr.Timeout > 0)
-            {
-                return methodAttr.Timeout;
-            }
-
-            return 0;
-        }
-
-        private static Exception UnwrapException(Exception ex)
-        {
-            if (ex is TargetInvocationException targetInvocationException && targetInvocationException.InnerException != null)
-            {
-                return UnwrapException(targetInvocationException.InnerException);
-            }
-
-            if (ex is AggregateException aggregateException && aggregateException.InnerException != null)
-            {
-                return UnwrapException(aggregateException.InnerException);
-            }
-
-            return ex;
-        }
-
-        private static object[]? BuildParameters(MethodInfo testMethod, TestMethodAttribute? methodAttr)
-        {
-            var methodParameters = testMethod.GetParameters();
-
-            if (methodParameters.Length == 0)
-            {
-                return null;
-            }
-
-            if (methodParameters.Length == 1 && methodParameters[0].ParameterType == typeof(int))
-            {
-                return new object[] { methodAttr?.Data ?? 0 };
-            }
-
-            throw new InvalidOperationException(
-                $"Тестовый метод {testMethod.Name} имеет неподдерживаемую сигнатуру. " +
-                "Разрешены методы без параметров или с одним параметром типа int.");
-        }
-
-        private static void PrintComparison(TestRunResult sequential, TestRunResult parallel)
-        {
-            Console.WriteLine("\n========================================");
-            Console.WriteLine("Сравнение производительности");
-            Console.WriteLine($"Последовательно: {sequential.Elapsed.TotalMilliseconds:F0} мс");
-            Console.WriteLine($"Параллельно:    {parallel.Elapsed.TotalMilliseconds:F0} мс");
-
-            var diff = sequential.Elapsed.TotalMilliseconds - parallel.Elapsed.TotalMilliseconds;
-            if (diff > 0)
-            {
-                Console.ForegroundColor = ConsoleColor.Green;
-                Console.WriteLine($"Параллельный запуск быстрее на {diff:F0} мс");
-            }
-            else if (diff < 0)
-            {
-                Console.ForegroundColor = ConsoleColor.Yellow;
-                Console.WriteLine($"Последовательный запуск быстрее на {Math.Abs(diff):F0} мс");
-            }
-            else
-            {
-                Console.WriteLine("Время выполнения одинаковое");
-            }
-
-            Console.ResetColor();
-            Console.WriteLine("========================================");
         }
     }
 }
