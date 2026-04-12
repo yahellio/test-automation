@@ -2,6 +2,50 @@ using System;
 
 namespace TestLibrary
 {
+    [AttributeUsage(AttributeTargets.Method)]
+    public sealed class TestCaseSourceAttribute : Attribute
+    {
+        public string MethodName { get; }
+
+        public TestCaseSourceAttribute(string methodName)
+        {
+            MethodName = methodName;
+        }
+    }
+
+    [AttributeUsage(AttributeTargets.Class | AttributeTargets.Method, AllowMultiple = true)]
+    public sealed class CategoryAttribute : Attribute
+    {
+        public string Name { get; }
+
+        public CategoryAttribute(string name)
+        {
+            Name = name;
+        }
+    }
+
+    [AttributeUsage(AttributeTargets.Method)]
+    public sealed class PriorityAttribute : Attribute
+    {
+        public int Level { get; }
+
+        public PriorityAttribute(int level)
+        {
+            Level = level;
+        }
+    }
+
+    [AttributeUsage(AttributeTargets.Method)]
+    public sealed class AuthorAttribute : Attribute
+    {
+        public string Name { get; }
+
+        public AuthorAttribute(string name)
+        {
+            Name = name;
+        }
+    }
+
     [AttributeUsage(AttributeTargets.Class)]
     public class TestClassAttribute : Attribute
     {

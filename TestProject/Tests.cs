@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Threading.Tasks;
 using TestLibrary;
 using TargetProject;
@@ -6,6 +7,7 @@ using TargetProject;
 namespace TestProject
 {
     [TestClass("Bank account tests")]
+    [Category("Account")]
     public class BankAccountTests
     {
         private BankAccount _account;
@@ -22,7 +24,28 @@ namespace TestProject
             _account = null;
         }
 
+        public static IEnumerable<object[]> DepositAmountsSource()
+        {
+            yield return new object[] { 10m };
+            yield return new object[] { 100m };
+            yield return new object[] { 250m };
+        }
+
+        [TestMethod("Deposit from iterator source (parameterized)")]
+        [TestCaseSource(nameof(DepositAmountsSource))]
+        [Category("Parameterized")]
+        [Priority(2)]
+        [Author("LR4")]
+        public void Deposit_FromSource_IncreasesBalance(decimal amount)
+        {
+            decimal initialBalance = _account.Balance;
+            _account.Deposit(amount);
+            Assert.AreEqual(initialBalance + amount, _account.Balance);
+        }
+
         [TestMethod("Deposit increases balance", timeout: 100, data: 500)]
+        [Category("Smoke")]
+        [Priority(1)]
         public void Deposit_ValidAmount_IncreasesBalance(int amount)
         {
             decimal initialBalance = _account.Balance;
@@ -31,6 +54,8 @@ namespace TestProject
         }
 
         [TestMethod("Withdraw decreases balance")]
+        [Category("Smoke")]
+        [Priority(1)]
         public void Withdraw_ValidAmount_DecreasesBalance()
         {
             decimal initialBalance = _account.Balance;
@@ -139,6 +164,9 @@ namespace TestProject
         }
 
         [TestMethod("Failing test for demonstration")]
+        [Category("Demo")]
+        [Priority(0)]
+        [Author("Demo")]
         public void FailingTest_Demonstration()
         {
             _account.Deposit(100m);
@@ -148,6 +176,8 @@ namespace TestProject
 
         [TestMethod("Timeout attribute demonstration")]
         [Timeout(50)]
+        [Category("Slow")]
+        [Priority(0)]
         public async Task TimeoutAttribute_Demonstration()
         {
             await Task.Delay(200);

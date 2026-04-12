@@ -28,6 +28,8 @@ internal static class Program
             return;
         }
 
+        DemonstrateLab4Features(testCases);
+
         var catalog = testCases.ToList();
         var passes = (int)Math.Ceiling(MinTotalTestRuns / (double)catalog.Count);
         var plannedRuns = passes * catalog.Count;
@@ -58,7 +60,8 @@ internal static class Program
             catalog,
             passes,
             "Фаза 1: один поток (как последовательное выполнение)",
-            monitor: false);
+            monitor: false,
+            logPoolLifecycleEvents: true);
 
         var dynamic = RunPhase(
             new DynamicThreadPoolOptions
@@ -82,7 +85,8 @@ internal static class Program
             catalog,
             passes,
             "Фаза 2: динамический пул",
-            monitor: true);
+            monitor: true,
+            logPoolLifecycleEvents: true);
 
         Console.WriteLine("\n========================================");
         Console.WriteLine("Сравнение времени (стена)");
@@ -111,16 +115,91 @@ internal static class Program
 
     private sealed record PhaseResult(double ElapsedMs, int MaxThreadsObserved, int PoolMaxThreads);
 
+    private static void DemonstrateLab4Features(IReadOnlyList<TestCase> all)
+    {
+        var smoke = TestRunnerCore.FilterTests(
+            all,
+            tc => tc.Categories.Any(c => c.Equals("Smoke", StringComparison.OrdinalIgnoreCase)));
+        var withoutDemo = TestRunnerCore.FilterTests(
+            all,
+            tc => !tc.Categories.Any(c => c.Equals("Demo", StringComparison.OrdinalIgnoreCase)));
+        var highPriority = TestRunnerCore.FilterTests(all, tc => tc.Priority is int p && p >= 2);
+
+        Console.WriteLine($"С фильтром «есть категория Smoke»: {smoke.Count} тест(ов)");
+        Console.WriteLine($"С фильтром «нет категории Demo»: {withoutDemo.Count} тест(ов)");
+        Console.WriteLine($"С фильтром «приоритет не ниже 2»: {highPriority.Count} тест(ов)");
+        Console.WriteLine("Примеры имён (Smoke):");
+        foreach (var tc in smoke.Take(4))
+        {
+            Console.WriteLine($"  · {tc.DisplayName}");
+        }
+
+        Console.WriteLine("\nДва теста из выборки Smoke (выполняются в основном потоке):");
+        foreach (var tc in smoke.Take(2))
+        {
+            var r = TestRunnerCore.ExecuteTestAsync(tc).GetAwaiter().GetResult();
+            if (r.IsSuccess)
+            {
+                Console.WriteLine($"  OK — {tc.DisplayName}\n");
+            }
+            else
+            {
+                Console.WriteLine($"  FAIL — {tc.DisplayName}: {r.ErrorMessage}\n");
+            }
+        }
+    }
+
+    private static void AttachPoolLifecycleLogging(DynamicThreadPool pool)
+    {
+        pool.PoolInitialized += (_, _) =>
+        {
+            lock (ConsoleLock)
+            {
+                Console.WriteLine("[событие пула] Инициализация завершена");
+            }
+        };
+
+        pool.WorkerThreadStarted += (_, e) =>
+        {
+            lock (ConsoleLock)
+            {
+                Console.WriteLine($"[событие пула] Воркер #{e.WorkerId} запущен, активных потоков: {e.ActiveWorkers}");
+            }
+        };
+
+        pool.WorkerThreadStopped += (_, e) =>
+        {
+            lock (ConsoleLock)
+            {
+                Console.WriteLine($"[событие пула] Воркер #{e.WorkerId} завершился, активных потоков: {e.ActiveWorkers}");
+            }
+        };
+
+        pool.PoolDisposed += (_, _) =>
+        {
+            lock (ConsoleLock)
+            {
+                Console.WriteLine("[событие пула] Начато освобождение пула");
+            }
+        };
+    }
+
     private static PhaseResult RunPhase(
         DynamicThreadPoolOptions poolOptions,
         List<TestCase> catalog,
         int passes,
         string title,
-        bool monitor)
+        bool monitor,
+        bool logPoolLifecycleEvents)
     {
         lock (ConsoleLock)
         {
             Console.WriteLine($"\n=== {title} ===\n");
+        }
+
+        if (logPoolLifecycleEvents)
+        {
+            poolOptions.AfterConstruction = AttachPoolLifecycleLogging;
         }
 
         using var pool = new DynamicThreadPool(poolOptions);
