@@ -4,6 +4,15 @@ namespace ThreadPoolModule;
 
 public sealed class DynamicThreadPool : IDisposable
 {
+    // События жизненного цикла пула 
+    public event EventHandler? PoolInitialized;
+
+    public event EventHandler<PoolWorkerEventArgs>? WorkerThreadStarted;
+    public event EventHandler<PoolWorkerEventArgs>? WorkerThreadStopped;
+    public event EventHandler<PoolQueueEventArgs>? TaskEnqueued;
+    public event EventHandler<PoolTaskCompletedEventArgs>? TaskCompleted;
+    public event EventHandler? PoolDisposed;
+
     private readonly DynamicThreadPoolOptions _options;
     private readonly Queue<WorkItem> _queue = new();
     private readonly object _queueLock = new();
@@ -25,6 +34,8 @@ public sealed class DynamicThreadPool : IDisposable
         _options = options;
         _workSignal = new Semaphore(0, int.MaxValue);
 
+        _options.AfterConstruction?.Invoke(this);
+
         lock (_workersLock)
         {
             for (var i = 0; i < options.MinThreads; i++)
@@ -39,6 +50,8 @@ public sealed class DynamicThreadPool : IDisposable
             Name = "Pool-Watchdog"
         };
         _watchdogThread.Start();
+
+        Raise(PoolInitialized);
     }
 
     //Поставить задачу в пул
@@ -60,6 +73,10 @@ public sealed class DynamicThreadPool : IDisposable
         }
 
         _workSignal.Release();
+
+        var qLen = GetQueueLengthLocked();
+        Raise(TaskEnqueued, new PoolQueueEventArgs { QueueLength = qLen });
+
         TryScaleUp();
     }
 
@@ -171,6 +188,12 @@ public sealed class DynamicThreadPool : IDisposable
         ctx.WorkerThread = thread;
         _workerContexts.Add(ctx);
         thread.Start();
+
+        Raise(WorkerThreadStarted, new PoolWorkerEventArgs
+        {
+            WorkerId = ctx.Id,
+            ActiveWorkers = _workerContexts.Count
+        });
     }
 
     private void WorkerLoop(WorkerContext ctx)
@@ -247,7 +270,8 @@ public sealed class DynamicThreadPool : IDisposable
                 {
                     ctx.Busy = false;
                     Interlocked.Decrement(ref _pending);
-                    Interlocked.Increment(ref _completed);
+                    var done = Interlocked.Increment(ref _completed);
+                    Raise(TaskCompleted, new PoolTaskCompletedEventArgs { CompletedTotal = done });
                     TrySignalDrained();
                 }
             }
@@ -266,10 +290,18 @@ public sealed class DynamicThreadPool : IDisposable
 
     private void RemoveWorkerContext(WorkerContext ctx)
     {
+        int active;
         lock (_workersLock)
         {
             _workerContexts.Remove(ctx);
+            active = _workerContexts.Count;
         }
+
+        Raise(WorkerThreadStopped, new PoolWorkerEventArgs
+        {
+            WorkerId = ctx.Id,
+            ActiveWorkers = active
+        });
     }
 
     private void EnsureMinimumWorkers()
@@ -341,6 +373,8 @@ public sealed class DynamicThreadPool : IDisposable
             return;
         }
 
+        Raise(PoolDisposed);
+
         _disposed = true;
 
         lock (_workersLock)
@@ -394,5 +428,28 @@ public sealed class DynamicThreadPool : IDisposable
         public volatile bool Busy;
         public DateTime WorkStartUtc;
         public Thread? WorkerThread;
+    }
+
+    private int GetQueueLengthLocked()
+    {
+        EnterQueueLock();
+        try
+        {
+            return _queue.Count;
+        }
+        finally
+        {
+            ExitQueueLock();
+        }
+    }
+
+    private void Raise(EventHandler? handler)
+    {
+        handler?.Invoke(this, EventArgs.Empty);
+    }
+
+    private void Raise<T>(EventHandler<T>? handler, T args) where T : EventArgs
+    {
+        handler?.Invoke(this, args);
     }
 }

@@ -22,4 +22,7 @@ public sealed class DynamicThreadPoolOptions
     public int WatchdogPeriodMs { get; init; } = 400;
     public Action<string>? LogInfo { get; init; }
     public Action<Exception>? LogError { get; init; }
+
+    // Вызывается до запуска воркеров (подписаться на события пула
+    public Action<DynamicThreadPool>? AfterConstruction { get; set; }
 }

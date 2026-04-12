@@ -1,3 +1,4 @@
+using System.Collections;
 using System.Reflection;
 using TestLibrary;
 
@@ -9,7 +10,11 @@ internal sealed record TestCase(
     MethodInfo? SetupMethod,
     MethodInfo? TeardownMethod,
     TestMethodAttribute? MethodAttribute,
-    string DisplayName);
+    string DisplayName,
+    object[]? RowParameters,
+    IReadOnlyList<string> Categories,
+    int? Priority,
+    string? Author);
 
 internal sealed record TestExecutionResult(bool IsSuccess, string ErrorMessage);
 
@@ -58,17 +63,54 @@ internal static class TestRunnerCore
                     ? testMethod.Name
                     : methodAttribute.Description;
 
-                result.Add(new TestCase(
-                    testClass,
-                    testMethod,
-                    setupMethod,
-                    teardownMethod,
-                    methodAttribute,
-                    $"{testClass.Name}: {methodName}"));
+                var categories = CollectCategories(testClass, testMethod);
+                var priority = testMethod.GetCustomAttribute<PriorityAttribute>()?.Level;
+                var author = testMethod.GetCustomAttribute<AuthorAttribute>()?.Name;
+
+                var sourceAttr = testMethod.GetCustomAttribute<TestCaseSourceAttribute>();
+                if (sourceAttr != null)
+                {
+                    var rows = ExpandFromSource(testClass, testMethod, sourceAttr.MethodName);
+                    for (var i = 0; i < rows.Count; i++)
+                    {
+                        var row = rows[i];
+                        var rowLabel = string.Join(", ", row.Select(FormatCell));
+                        result.Add(new TestCase(
+                            testClass,
+                            testMethod,
+                            setupMethod,
+                            teardownMethod,
+                            methodAttribute,
+                            $"{testClass.Name}: {methodName} [набор {i + 1}: {rowLabel}]",
+                            row,
+                            categories,
+                            priority,
+                            author));
+                    }
+                }
+                else
+                {
+                    result.Add(new TestCase(
+                        testClass,
+                        testMethod,
+                        setupMethod,
+                        teardownMethod,
+                        methodAttribute,
+                        $"{testClass.Name}: {methodName}",
+                        null,
+                        categories,
+                        priority,
+                        author));
+                }
             }
         }
 
         return result;
+    }
+
+    internal static List<TestCase> FilterTests(IEnumerable<TestCase> tests, Func<TestCase, bool> predicate)
+    {
+        return tests.Where(predicate).ToList();
     }
 
     internal static async Task<TestExecutionResult> ExecuteTestAsync(TestCase testCase)
@@ -76,7 +118,7 @@ internal static class TestRunnerCore
         object? instance;
         try
         {
-            instance = Activator.CreateInstance(testCase.TestClass);
+            instance = testCase.TestMethod.IsStatic ? null : Activator.CreateInstance(testCase.TestClass);
         }
         catch (Exception ex)
         {
@@ -86,7 +128,7 @@ internal static class TestRunnerCore
         object[]? parameters;
         try
         {
-            parameters = BuildParameters(testCase.TestMethod, testCase.MethodAttribute);
+            parameters = BuildParameters(testCase);
         }
         catch (Exception ex)
         {
@@ -172,8 +214,14 @@ internal static class TestRunnerCore
         return ex;
     }
 
-    private static object[]? BuildParameters(MethodInfo testMethod, TestMethodAttribute? methodAttr)
+    private static object[]? BuildParameters(TestCase testCase)
     {
+        if (testCase.RowParameters != null)
+        {
+            return testCase.RowParameters;
+        }
+
+        var testMethod = testCase.TestMethod;
         var methodParameters = testMethod.GetParameters();
 
         if (methodParameters.Length == 0)
@@ -183,11 +231,81 @@ internal static class TestRunnerCore
 
         if (methodParameters.Length == 1 && methodParameters[0].ParameterType == typeof(int))
         {
-            return new object[] { methodAttr?.Data ?? 0 };
+            return new object[] { testCase.MethodAttribute?.Data ?? 0 };
         }
 
         throw new InvalidOperationException(
             $"Тестовый метод {testMethod.Name} имеет неподдерживаемую сигнатуру. " +
-            "Разрешены методы без параметров или с одним параметром типа int.");
+            "Укажите [TestCaseSource] или один параметр int через [TestMethod(..., data: n)].");
+    }
+
+    private static IReadOnlyList<string> CollectCategories(Type testClass, MethodInfo method)
+    {
+        var list = new List<string>();
+        foreach (var a in testClass.GetCustomAttributes<CategoryAttribute>())
+        {
+            list.Add(a.Name);
+        }
+
+        foreach (var a in method.GetCustomAttributes<CategoryAttribute>())
+        {
+            list.Add(a.Name);
+        }
+
+        return list;
+    }
+
+    private static List<object[]> ExpandFromSource(Type testClass, MethodInfo testMethod, string sourceMethodName)
+    {
+        const BindingFlags flags = BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic;
+        var source = testClass.GetMethod(sourceMethodName, flags);
+        if (source == null)
+        {
+            throw new InvalidOperationException(
+                $"Не найден статический метод «{sourceMethodName}» в классе {testClass.Name}.");
+        }
+
+        if (source.GetParameters().Length != 0)
+        {
+            throw new InvalidOperationException($"Метод источника «{sourceMethodName}» должен быть без параметров.");
+        }
+
+        var raw = source.Invoke(null, null);
+        if (raw is not IEnumerable seq)
+        {
+            throw new InvalidOperationException($"Метод «{sourceMethodName}» должен вернуть IEnumerable.");
+        }
+
+        var paramInfos = testMethod.GetParameters();
+        var list = new List<object[]>();
+
+        foreach (var item in seq)
+        {
+            if (item is not object[] row)
+            {
+                throw new InvalidOperationException(
+                    $"Каждый элемент из «{sourceMethodName}» должен быть object[].");
+            }
+
+            if (row.Length != paramInfos.Length)
+            {
+                throw new InvalidOperationException(
+                    $"Для {testMethod.Name} ожидалось {paramInfos.Length} значений в строке, получено {row.Length}.");
+            }
+
+            list.Add(row);
+        }
+
+        return list;
+    }
+
+    private static string FormatCell(object? value)
+    {
+        return value switch
+        {
+            null => "null",
+            IFormattable f => f.ToString(null, System.Globalization.CultureInfo.InvariantCulture) ?? "",
+            _ => value.ToString() ?? ""
+        };
     }
 }
