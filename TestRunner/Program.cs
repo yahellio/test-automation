@@ -134,7 +134,7 @@ internal static class Program
             Console.WriteLine($"  · {tc.DisplayName}");
         }
 
-        Console.WriteLine("\nДва теста из выборки Smoke (выполняются в основном потоке):");
+        Console.WriteLine("\nДва теста из выборки Smoke:");
         foreach (var tc in smoke.Take(2))
         {
             var r = TestRunnerCore.ExecuteTestAsync(tc).GetAwaiter().GetResult();

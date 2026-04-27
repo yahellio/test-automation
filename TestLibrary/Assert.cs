@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Generic;
+using System.Linq.Expressions;
 using System.Threading.Tasks;
 
 namespace TestLibrary
@@ -33,6 +35,91 @@ namespace TestLibrary
             if (!condition)
             {
                 throw new AssertFailedException("Expected: <True>, Actual: <False>");
+            }
+        }
+
+        // Проверка по дереву выражений
+        public static void IsTrue(Expression<Func<bool>> condition)
+        {
+            if (condition.Compile()())
+                return;
+
+            var p = condition.Parameters;
+            var body = condition.Body;
+
+            string opLine;
+            string structure = FormatNodeStructure(body);
+            string valuesLine;
+
+            switch (body)
+            {
+                case BinaryExpression b:
+                    opLine = BinaryOpName(b.NodeType);
+                    valuesLine = $"левый: {Eval(b.Left, p)}, правый: {Eval(b.Right, p)}";
+                    break;
+                case UnaryExpression u:
+                    opLine = u.NodeType.ToString();
+                    valuesLine = $"операнд: {Eval(u.Operand, p)}, результат: {Eval(u, p)}";
+                    break;
+                default:
+                    opLine = body.NodeType.ToString();
+                    valuesLine = Eval(body, p);
+                    break;
+            }
+
+            throw new AssertFailedException(
+                "Оператор: " + opLine + "\n" +
+                "Структура выражения: " + structure + "\n" +
+                "Значения операндов: " + valuesLine);
+        }
+
+        // Краткое текстовое дерево по типам узлов
+        private static string FormatNodeStructure(Expression e, int depth = 0, int maxDepth = 4)
+        {
+            if (depth >= maxDepth)
+                return e.NodeType.ToString();
+
+            return e switch
+            {
+                BinaryExpression b =>
+                    $"{b.NodeType}({FormatNodeStructure(b.Left, depth + 1, maxDepth)}, {FormatNodeStructure(b.Right, depth + 1, maxDepth)})",
+                UnaryExpression u =>
+                    $"{u.NodeType}({FormatNodeStructure(u.Operand, depth + 1, maxDepth)})",
+                _ => e.NodeType.ToString()
+            };
+        }
+
+        private static string BinaryOpName(ExpressionType t) =>
+            t switch
+            {
+                ExpressionType.Equal => "==",
+                ExpressionType.NotEqual => "!=",
+                ExpressionType.GreaterThan => ">",
+                ExpressionType.LessThan => "<",
+                ExpressionType.GreaterThanOrEqual => ">=",
+                ExpressionType.LessThanOrEqual => "<=",
+                ExpressionType.AndAlso => "&&",
+                ExpressionType.OrElse => "||",
+                ExpressionType.Add or ExpressionType.AddChecked => "+",
+                ExpressionType.Subtract or ExpressionType.SubtractChecked => "-",
+                ExpressionType.Multiply or ExpressionType.MultiplyChecked => "*",
+                ExpressionType.Divide => "/",
+                _ => t.ToString()
+            };
+
+        //вычисляем значение произвольного выражения
+        private static string Eval(Expression node, IReadOnlyList<ParameterExpression> parameters)
+        {
+            try
+            {
+                var lambda = Expression.Lambda(node, parameters);
+                var d = lambda.Compile();
+                var v = d.DynamicInvoke();
+                return v is null ? "null" : v.ToString() ?? "";
+            }
+            catch
+            {
+                return "(невычислимо)";
             }
         }
 
